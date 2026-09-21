@@ -1,0 +1,56 @@
+# Sobe a aplicação inteira containerizada — diferente do
+# docker-compose.dev.yml, que só cobre Postgres/Redis pra rodar api/web
+# direto com `npm run start:dev` / `npm run dev` na máquina. Migrations
+# (init + constraints_and_rls) rodam sozinhas no start do container `api`
+# — ver apps/api/Dockerfile.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fithub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fithub}
+      POSTGRES_DB: fithub
+    volumes:
+      - fithub_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U fithub']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      DATABASE_URL: postgresql://fithub:${POSTGRES_PASSWORD:-fithub}@postgres:5432/fithub
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env antes de subir em produção}
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000/api/v1}
+    ports:
+      - '3001:3001'
+    depends_on:
+      - api
+
+volumes:
+  fithub_postgres_data:

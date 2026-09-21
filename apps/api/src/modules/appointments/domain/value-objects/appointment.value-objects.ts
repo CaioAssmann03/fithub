@@ -1,0 +1,13 @@
+export enum AppointmentType {
+  ASSESSMENT = 'ASSESSMENT',
+  CONSULTATION = 'CONSULTATION',
+  WORKOUT_SESSION = 'WORKOUT_SESSION',
+  OTHER = 'OTHER',
+}
+
+export enum AppointmentStatus {
+  SCHEDULED = 'SCHEDULED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+  NO_SHOW = 'NO_SHOW',
+}

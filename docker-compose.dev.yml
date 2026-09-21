@@ -1,0 +1,25 @@
+# Dependências locais (Postgres + Redis) — NÃO é a containerização da
+# aplicação (isso é docker-compose.yml, na raiz). Isso aqui só existe pra
+# ter banco/cache rodando localmente sem instalar nada direto na máquina.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fithub
+      POSTGRES_PASSWORD: fithub
+      POSTGRES_DB: fithub
+    ports:
+      # Host 5433, não 5432 — a porta padrão já está ocupada neste
+      # ambiente por um container Postgres de outro projeto
+      # (clinica_postgres). Container interno continua em 5432.
+      - '5433:5432'
+    volumes:
+      - fithub_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+
+volumes:
+  fithub_postgres_data:

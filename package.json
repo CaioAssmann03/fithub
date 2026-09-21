@@ -1,0 +1,11 @@
+{
+  "name": "fithub",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FitHub — monorepo (api, web, mobile, shared-types). Ver docs/ARCHITECTURE.md.",
+  "scripts": {
+    "dev:api": "pnpm --filter fithub-api start:dev",
+    "dev:web": "pnpm --filter fithub-web dev",
+    "dev:mobile": "pnpm --filter fithub-mobile start"
+  }
+}

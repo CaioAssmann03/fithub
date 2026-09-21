@@ -1,0 +1,22 @@
+export enum MuscleGroup {
+  CHEST = 'CHEST',
+  BACK = 'BACK',
+  LEGS = 'LEGS',
+  SHOULDERS = 'SHOULDERS',
+  ARMS = 'ARMS',
+  CORE = 'CORE',
+  FULL_BODY = 'FULL_BODY',
+  CARDIO = 'CARDIO',
+  GLUTES = 'GLUTES',
+  CALVES = 'CALVES',
+}
+
+export enum Equipment {
+  BARBELL = 'BARBELL',
+  DUMBBELL = 'DUMBBELL',
+  MACHINE = 'MACHINE',
+  BODYWEIGHT = 'BODYWEIGHT',
+  CABLE = 'CABLE',
+  BAND = 'BAND',
+  KETTLEBELL = 'KETTLEBELL',
+}

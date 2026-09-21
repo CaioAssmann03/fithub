@@ -1,0 +1,682 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS — trocam VARCHAR+CHECK (Etapa 3) por tipo nativo do Postgres
+// ============================================================
+
+enum TenantPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  PERSONAL_TRAINER
+  STUDENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StudentGoalType {
+  WEIGHT_LOSS
+  MUSCLE_GAIN
+  CONDITIONING
+  REHABILITATION
+  GENERAL_HEALTH
+  OTHER
+}
+
+enum BmiClassification {
+  UNDERWEIGHT
+  NORMAL
+  OVERWEIGHT
+  OBESE
+}
+
+enum BodyFatMethod {
+  MANUAL
+  BIOIMPEDANCE
+  SKINFOLD_FORMULA
+}
+
+enum MuscleGroup {
+  CHEST
+  BACK
+  LEGS
+  SHOULDERS
+  ARMS
+  CORE
+  FULL_BODY
+  CARDIO
+  GLUTES
+  CALVES
+}
+
+enum Equipment {
+  BARBELL
+  DUMBBELL
+  MACHINE
+  BODYWEIGHT
+  CABLE
+  BAND
+  KETTLEBELL
+}
+
+/// Reaproveitado por Workout.status e Diet.status — mesmo state machine
+/// de versionamento (Etapa 2, seção "createNewVersion").
+enum LifecycleStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum LoadType {
+  FIXED_WEIGHT
+  BODYWEIGHT
+  PERCENTAGE_1RM
+}
+
+/// Técnica de série dentro de um SetBlock — REST_PAUSE não ganha
+/// subestrutura pra sequência tipo "10+5+5", fica em SetBlock.notes.
+enum SetTechnique {
+  STANDARD
+  FEEDER_SET
+  WORKING_SET
+  TOP_SET
+  BACK_OFF_SET
+  DROP_SET
+  REST_PAUSE
+  OTHER
+}
+
+enum AppointmentType {
+  ASSESSMENT
+  CONSULTATION
+  WORKOUT_SESSION
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum NotificationChannel {
+  PUSH
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+// ============================================================
+// TENANCY
+// ============================================================
+
+model Tenant {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerUserId  String?      @unique @map("owner_user_id") @db.Uuid
+  name         String       @db.VarChar(120)
+  plan         TenantPlan   @default(FREE)
+  status       TenantStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime     @default(now()) @map("updated_at") @db.Timestamptz
+
+  owner            User?             @relation("TenantOwner", fields: [ownerUserId], references: [id])
+  users             User[]            @relation("TenantUsers")
+  refreshTokens     RefreshToken[]
+  files             File[]
+  trainerProfiles   TrainerProfile[]
+  students          Student[]
+  studentPhotos     StudentPhoto[]
+  assessments       Assessment[]
+  assessmentPhotos  AssessmentPhoto[]
+  exercises         Exercise[]
+  workouts          Workout[]
+  workoutExercises  WorkoutExercise[]
+  setBlocks         SetBlock[]
+  microcycles       Microcycle[]
+  foods             Food[]
+  diets             Diet[]
+  meals             Meal[]
+  mealFoods         MealFood[]
+  feedbacks         Feedback[]
+  appointments      Appointment[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+
+  @@map("tenants")
+}
+
+// ============================================================
+// IDENTITY
+// ============================================================
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?  @map("tenant_id") @db.Uuid
+  email        String   @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  role         UserRole
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  tenant         Tenant?         @relation("TenantUsers", fields: [tenantId], references: [id])
+  ownedTenant    Tenant?         @relation("TenantOwner")
+  trainerProfile TrainerProfile?
+  student        Student?
+  refreshTokens  RefreshToken[]
+  uploadedFiles  File[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  // Único-por-tenant coberto aqui; único-global-entre-admins (tenantId NULL)
+  // precisa do índice parcial uq_users_email_admin — Prisma não expressa
+  // WHERE em @@unique, ver PRISMA-MODEL.md seção 3.
+  @@unique([tenantId, email], map: "uq_users_email_per_tenant")
+  @@index([tenantId], map: "idx_users_tenant")
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String?   @map("tenant_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @map("token_hash") @db.VarChar(255)
+  familyId   String    @map("family_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_refresh_tokens_user")
+  @@index([familyId], map: "idx_refresh_tokens_family")
+  @@map("refresh_tokens")
+}
+
+// ============================================================
+// FILES
+// ============================================================
+
+model File {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  uploadedByUserId String?  @map("uploaded_by_user_id") @db.Uuid
+  storageKey       String   @map("storage_key") @db.VarChar(500)
+  mimeType         String   @map("mime_type") @db.VarChar(100)
+  sizeBytes        Int      @map("size_bytes")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  uploadedBy       User?             @relation(fields: [uploadedByUserId], references: [id])
+  trainerAvatars   TrainerProfile[]
+  exerciseVideos   Exercise[]        @relation("ExerciseVideo")
+  exerciseImages   Exercise[]        @relation("ExerciseImage")
+  dietPdfs         Diet[]
+  studentPhotos    StudentPhoto[]
+  assessmentPhotos AssessmentPhoto[]
+
+  @@index([tenantId], map: "idx_files_tenant")
+  @@map("files")
+}
+
+model TrainerProfile {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @unique @map("user_id") @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  cref         String?  @db.VarChar(20)
+  specialty    String?  @db.VarChar(120)
+  bio          String?
+  avatarFileId String?  @map("avatar_file_id") @db.Uuid
+  phone        String?  @db.VarChar(20)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+  avatar File?   @relation(fields: [avatarFileId], references: [id])
+
+  @@index([tenantId], map: "idx_trainer_profiles_tenant")
+  @@map("trainer_profiles")
+}
+
+// ============================================================
+// STUDENTS (Core Domain)
+// ============================================================
+
+model Student {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String          @map("tenant_id") @db.Uuid
+  userId     String?         @unique @map("user_id") @db.Uuid
+  name       String          @db.VarChar(160)
+  gender     Gender
+  birthDate  DateTime        @map("birth_date") @db.Date
+  heightCm   Decimal?        @map("height_cm") @db.Decimal(5, 2)
+  goalType   StudentGoalType? @map("goal_type")
+  goalDetail String?         @map("goal_detail")
+  phone      String?         @db.VarChar(20)
+  whatsapp   String?         @db.VarChar(20)
+  email      String?         @db.VarChar(255)
+  notes      String?
+  status     StudentStatus   @default(ACTIVE)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime        @default(now()) @map("updated_at") @db.Timestamptz
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
+  user        User?             @relation(fields: [userId], references: [id])
+  photos      StudentPhoto[]
+  assessments Assessment[]
+  workouts    Workout[]
+  microcycles Microcycle[]
+  diets       Diet[]
+  feedbacks   Feedback[]
+  appointments Appointment[]
+
+  // uq_students_email_per_tenant: NULL nunca colide com NULL em Postgres,
+  // então esse @@unique já se comporta como o índice parcial da Etapa 3
+  // sem precisar de WHERE — caso diferente do de User (ver acima).
+  @@unique([tenantId, email], map: "uq_students_email_per_tenant")
+  @@index([tenantId], map: "idx_students_tenant")
+  @@index([tenantId, status], map: "idx_students_tenant_status")
+  @@map("students")
+}
+
+model StudentPhoto {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  studentId String   @map("student_id") @db.Uuid
+  fileId    String   @map("file_id") @db.Uuid
+  position  Int      @default(0) @db.SmallInt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  file    File    @relation(fields: [fileId], references: [id])
+
+  @@index([studentId], map: "idx_student_photos_student")
+  @@map("student_photos")
+}
+
+// ============================================================
+// ASSESSMENTS (Core Domain)
+// ============================================================
+
+model Assessment {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String             @map("tenant_id") @db.Uuid
+  studentId         String             @map("student_id") @db.Uuid
+  assessedAt        DateTime           @map("assessed_at") @db.Date
+  weightKg          Decimal            @map("weight_kg") @db.Decimal(5, 2)
+  heightCm          Decimal            @map("height_cm") @db.Decimal(5, 2)
+  bmiValue          Decimal            @map("bmi_value") @db.Decimal(4, 1)
+  bmiClassification BmiClassification  @map("bmi_classification")
+  bodyFatPercent    Decimal?           @map("body_fat_percent") @db.Decimal(4, 1)
+  bodyFatMethod     BodyFatMethod?     @map("body_fat_method")
+  circumferences    Json?              @db.JsonB
+  skinfolds         Json?              @db.JsonB
+  notes             String?
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id])
+  student Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  photos  AssessmentPhoto[]
+
+  @@index([tenantId], map: "idx_assessments_tenant")
+  @@index([studentId, assessedAt(sort: Desc)], map: "idx_assessments_student_date")
+  @@map("assessments")
+}
+
+model AssessmentPhoto {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  assessmentId String   @map("assessment_id") @db.Uuid
+  fileId       String   @map("file_id") @db.Uuid
+  position     Int      @default(0) @db.SmallInt
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  file       File       @relation(fields: [fileId], references: [id])
+
+  @@index([assessmentId], map: "idx_assessment_photos_assessment")
+  @@map("assessment_photos")
+}
+
+// ============================================================
+// EXERCISES (catálogo híbrido) + WORKOUTS (Core Domain)
+// ============================================================
+
+model Exercise {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?     @map("tenant_id") @db.Uuid
+  name         String      @db.VarChar(160)
+  muscleGroup  MuscleGroup @map("muscle_group")
+  equipment    Equipment[]
+  description  String?
+  videoFileId  String?     @map("video_file_id") @db.Uuid
+  imageFileId  String?     @map("image_file_id") @db.Uuid
+  tags         String[]
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant           Tenant?           @relation(fields: [tenantId], references: [id])
+  videoFile        File?             @relation("ExerciseVideo", fields: [videoFileId], references: [id])
+  imageFile        File?             @relation("ExerciseImage", fields: [imageFileId], references: [id])
+  workoutExercises WorkoutExercise[]
+
+  @@index([tenantId], map: "idx_exercises_tenant")
+  @@index([muscleGroup], map: "idx_exercises_muscle_group")
+  @@map("exercises")
+}
+
+model Workout {
+  id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId               String          @map("tenant_id") @db.Uuid
+  studentId              String          @map("student_id") @db.Uuid
+  label                  String          @db.VarChar(80)
+  version                Int             @default(1)
+  previousVersionId      String?         @map("previous_version_id") @db.Uuid
+  status                 LifecycleStatus @default(ACTIVE)
+  notes                  String?
+  microcycleId           String?         @map("microcycle_id") @db.Uuid
+  defaultRestSecondsMin  Int?            @map("default_rest_seconds_min")
+  defaultRestSecondsMax  Int?            @map("default_rest_seconds_max")
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  student         Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  previousVersion Workout?          @relation("WorkoutVersionHistory", fields: [previousVersionId], references: [id])
+  nextVersions    Workout[]         @relation("WorkoutVersionHistory")
+  microcycle      Microcycle?       @relation(fields: [microcycleId], references: [id])
+  exercises       WorkoutExercise[]
+  feedbacks       Feedback[]
+
+  @@index([tenantId], map: "idx_workouts_tenant")
+  @@index([studentId, status], map: "idx_workouts_student_status")
+  @@index([microcycleId], map: "idx_workouts_microcycle")
+  // uq_workouts_active_label (WHERE status = 'ACTIVE') fica de fora daqui —
+  // ver PRISMA-MODEL.md seção 3.
+  @@map("workouts")
+}
+
+/// Blocos de série passaram a viver em SetBlock (Etapa "periodização") —
+/// um WorkoutExercise pode ter múltiplos blocos com técnica própria (ex:
+/// "Remada baixa (FS) + 3x8~10 + 1x6~8" = 2 blocos). weeklyFrequency*
+/// cobre cardio/extras prescritos por frequência semanal em vez de
+/// sets/reps (coexiste com setBlocks — não é um OU exclusivo).
+model WorkoutExercise {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String   @map("tenant_id") @db.Uuid
+  workoutId            String   @map("workout_id") @db.Uuid
+  exerciseId           String   @map("exercise_id") @db.Uuid
+  order                Int      @db.SmallInt
+  weeklyFrequencyMin   Int?     @map("weekly_frequency_min") @db.SmallInt
+  weeklyFrequencyMax   Int?     @map("weekly_frequency_max") @db.SmallInt
+  freeformPrescription String?  @map("freeform_prescription")
+  videoUrl             String?  @map("video_url")
+  notes                String?
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  workout   Workout    @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exercise  Exercise   @relation(fields: [exerciseId], references: [id])
+  setBlocks SetBlock[]
+
+  @@unique([workoutId, order], map: "uq_workout_exercises_order")
+  @@index([workoutId], map: "idx_workout_exercises_workout")
+  @@map("workout_exercises")
+}
+
+model SetBlock {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String       @map("tenant_id") @db.Uuid
+  workoutExerciseId String       @map("workout_exercise_id") @db.Uuid
+  order             Int          @db.SmallInt
+  technique         SetTechnique @default(STANDARD)
+  sets              Int          @db.SmallInt
+  repsMin           Int          @map("reps_min") @db.SmallInt
+  repsMax           Int          @map("reps_max") @db.SmallInt
+  loadType          LoadType     @map("load_type")
+  loadValue         Decimal?     @map("load_value") @db.Decimal(6, 2)
+  restSecondsMin    Int?         @map("rest_seconds_min")
+  restSecondsMax    Int?         @map("rest_seconds_max")
+  notes             String?
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  workoutExercise WorkoutExercise @relation(fields: [workoutExerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([workoutExerciseId, order], map: "uq_set_blocks_order")
+  @@index([workoutExerciseId], map: "idx_set_blocks_workout_exercise")
+  @@map("set_blocks")
+}
+
+/// Fase de periodização do treino de um aluno (ex: "Base" 9 semanas,
+/// "Deload" 1 semana) — Workout.microcycleId aponta pra cá, referência
+/// plana (mesmo padrão de Workout.studentId), não composição. Mesociclo
+/// (soma de microciclos consecutivos) fica implícito, sem tabela própria
+/// — ver DDD-MODEL.md desta etapa.
+model Microcycle {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  studentId String   @map("student_id") @db.Uuid
+  name      String   @db.VarChar(80)
+  order     Int      @db.SmallInt
+  weeks     Int      @db.SmallInt
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  student  Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  workouts Workout[]
+
+  @@unique([studentId, order], map: "uq_microcycles_student_order")
+  @@index([tenantId], map: "idx_microcycles_tenant")
+  @@map("microcycles")
+}
+
+// ============================================================
+// FOOD CATALOG + DIETS
+// ============================================================
+
+model Food {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @map("tenant_id") @db.Uuid
+  name             String   @db.VarChar(160)
+  caloriesPer100g  Decimal? @map("calories_per_100g") @db.Decimal(6, 2)
+  proteinG         Decimal? @map("protein_g") @db.Decimal(5, 2)
+  carbsG           Decimal? @map("carbs_g") @db.Decimal(5, 2)
+  fatG             Decimal? @map("fat_g") @db.Decimal(5, 2)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id])
+  mealFoods MealFood[]
+
+  @@index([tenantId], map: "idx_foods_tenant")
+  @@map("foods")
+}
+
+model Diet {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String          @map("tenant_id") @db.Uuid
+  studentId         String          @map("student_id") @db.Uuid
+  name              String          @db.VarChar(160)
+  version           Int             @default(1)
+  previousVersionId String?         @map("previous_version_id") @db.Uuid
+  status            LifecycleStatus @default(ACTIVE)
+  notes             String?
+  pdfFileId         String?         @map("pdf_file_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  previousVersion Diet?    @relation("DietVersionHistory", fields: [previousVersionId], references: [id])
+  nextVersions    Diet[]   @relation("DietVersionHistory")
+  pdfFile         File?    @relation(fields: [pdfFileId], references: [id])
+  meals           Meal[]
+
+  @@index([tenantId], map: "idx_diets_tenant")
+  @@index([studentId, status], map: "idx_diets_student_status")
+  // uq_diets_active_name (WHERE status = 'ACTIVE') fica de fora daqui —
+  // ver PRISMA-MODEL.md seção 3.
+  @@map("diets")
+}
+
+model Meal {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  dietId   String   @map("diet_id") @db.Uuid
+  name     String   @db.VarChar(80)
+  time     DateTime @db.Time
+  order    Int      @db.SmallInt
+  notes    String?
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id])
+  diet   Diet       @relation(fields: [dietId], references: [id], onDelete: Cascade)
+  foods  MealFood[]
+
+  @@index([dietId], map: "idx_meals_diet")
+  @@map("meals")
+}
+
+model MealFood {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  mealId        String   @map("meal_id") @db.Uuid
+  foodId        String   @map("food_id") @db.Uuid
+  quantityValue Decimal  @map("quantity_value") @db.Decimal(6, 2)
+  quantityUnit  String   @map("quantity_unit") @db.VarChar(10)
+  notes         String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  meal   Meal   @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  food   Food   @relation(fields: [foodId], references: [id])
+
+  @@index([mealId], map: "idx_meal_foods_meal")
+  @@map("meal_foods")
+}
+
+// ============================================================
+// FEEDBACK
+// ============================================================
+
+model Feedback {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String   @map("tenant_id") @db.Uuid
+  studentId            String   @map("student_id") @db.Uuid
+  workoutId            String?  @map("workout_id") @db.Uuid
+  submittedAt          DateTime @default(now()) @map("submitted_at") @db.Timestamptz
+  generalRating        Int?     @map("general_rating") @db.SmallInt
+  muscleSoreness       Int?     @map("muscle_soreness") @db.SmallInt
+  difficulty           Int?     @db.SmallInt
+  mood                 Int?     @db.SmallInt
+  energy               Int?     @db.SmallInt
+  sleepQuality         Int?     @map("sleep_quality") @db.SmallInt
+  waterIntakeL         Decimal? @map("water_intake_l") @db.Decimal(3, 1)
+  selfReportedWeightKg Decimal? @map("self_reported_weight_kg") @db.Decimal(5, 2)
+  notes                String?
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  student Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  workout Workout? @relation(fields: [workoutId], references: [id])
+
+  @@index([tenantId], map: "idx_feedbacks_tenant")
+  @@index([studentId, submittedAt(sort: Desc)], map: "idx_feedbacks_student_date")
+  @@map("feedbacks")
+}
+
+// ============================================================
+// APPOINTMENTS
+// ============================================================
+
+model Appointment {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String             @map("tenant_id") @db.Uuid
+  studentId        String             @map("student_id") @db.Uuid
+  type             AppointmentType
+  scheduledAt      DateTime           @map("scheduled_at") @db.Timestamptz
+  durationMinutes  Int                @default(60) @map("duration_minutes") @db.SmallInt
+  status           AppointmentStatus  @default(SCHEDULED)
+  notes            String?
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId], map: "idx_appointments_tenant")
+  @@index([tenantId, scheduledAt], map: "idx_appointments_tenant_scheduled")
+  @@index([studentId], map: "idx_appointments_student")
+  @@map("appointments")
+}
+
+// ============================================================
+// NOTIFICATIONS + AUDIT
+// ============================================================
+
+model Notification {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  recipientUserId   String              @map("recipient_user_id") @db.Uuid
+  channel           NotificationChannel
+  type              String              @db.VarChar(50)
+  payload           Json                @default("{}") @db.JsonB
+  status            NotificationStatus  @default(PENDING)
+  sentAt            DateTime?           @map("sent_at") @db.Timestamptz
+  readAt            DateTime?           @map("read_at") @db.Timestamptz
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  recipient User   @relation(fields: [recipientUserId], references: [id])
+
+  @@index([recipientUserId, status], map: "idx_notifications_recipient")
+  @@map("notifications")
+}
+
+/// Append-only por convenção de aplicação (Etapa 5 não concede UPDATE/DELETE
+/// pro role de app nessa tabela) — sem updatedAt de propósito.
+model AuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?  @map("tenant_id") @db.Uuid
+  actorUserId  String?  @map("actor_user_id") @db.Uuid
+  action       String   @db.VarChar(100)
+  targetType   String?  @map("target_type") @db.VarChar(50)
+  targetId     String?  @map("target_id") @db.Uuid
+  metadata     Json?    @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+  actor  User?   @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId], map: "idx_audit_logs_tenant")
+  @@index([actorUserId], map: "idx_audit_logs_actor")
+  @@map("audit_logs")
+}
