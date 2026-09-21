@@ -13,6 +13,17 @@ import Redis from 'ioredis';
 export class RedisService implements OnModuleDestroy {
   public readonly client = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
 
+  constructor() {
+    // Sem este listener, uma queda de conexão (comum em produção) vira
+    // exceção não tratada — ioredis emite 'error' e o EventEmitter derruba
+    // o processo inteiro se nada estiver ouvindo. ioredis já reconecta
+    // sozinho por trás; só precisamos evitar o crash e deixar rastro.
+    this.client.on('error', (err) => {
+      // eslint-disable-next-line no-console
+      console.error('Redis connection error:', err.message);
+    });
+  }
+
   async onModuleDestroy() {
     await this.client.quit();
   }
